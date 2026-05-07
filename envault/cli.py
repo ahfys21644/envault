@@ -1,92 +1,96 @@
-"""Command-line interface for envault."""
+"""Main CLI entry point for envault."""
 
 import click
-from pathlib import Path
-from getpass import getpass
 
-from envault.vault import (
-    set_secret, get_secret, delete_secret,
-    list_keys, load_vault, DEFAULT_VAULT,
-)
+from envault.vault import load_vault, save_vault, set_secret, get_secret, delete_secret
+from envault.export import import_dotenv_file, export_dotenv_file
+from envault.audit import record_event
+from envault.cli_audit import audit_group
+from envault.cli_rotate import rotate_group
+from envault.cli_diff import diff_group
 
 
-def _prompt_password(confirm: bool = False) -> str:
-    pwd = getpass("Vault password: ")
-    if confirm:
-        pwd2 = getpass("Confirm password: ")
-        if pwd != pwd2:
-            raise click.ClickException("Passwords do not match.")
-    return pwd
+def _prompt_password(confirm: bool = True) -> str:
+    return click.prompt(
+        "Password",
+        hide_input=True,
+        confirmation_prompt=confirm,
+    )
 
 
 @click.group()
-@click.option("--vault", default=str(DEFAULT_VAULT), show_default=True,
-              help="Path to the vault file.")
-@click.pass_context
-def cli(ctx, vault):
-    """envault — encrypt and sync .env secrets."""
-    ctx.ensure_object(dict)
-    ctx.obj["vault"] = Path(vault)
+def cli():
+    """envault — encrypt and sync your .env secrets."""
 
 
 @cli.command()
 @click.argument("key")
 @click.argument("value")
-@click.pass_context
-def set(ctx, key, value):
-    """Store or update a secret KEY=VALUE."""
-    pwd = _prompt_password(confirm=not ctx.obj["vault"].exists())
-    set_secret(key, value, ctx.obj["vault"], pwd)
-    click.echo(f"✓ '{key}' saved.")
+@click.option("--vault", "vault_path", default=".envault", show_default=True)
+def set(key, value, vault_path):
+    """Set a secret in the vault."""
+    password = _prompt_password(confirm=False)
+    vault = load_vault(vault_path)
+    vault = set_secret(vault, key, value, password)
+    save_vault(vault, vault_path)
+    record_event("set", {"key": key, "vault": vault_path})
+    click.echo(f"Secret '{key}' saved.")
 
 
 @cli.command()
 @click.argument("key")
-@click.pass_context
-def get(ctx, key):
-    """Print the value of a secret KEY."""
-    pwd = _prompt_password()
-    val = get_secret(key, ctx.obj["vault"], pwd)
-    if val is None:
+@click.option("--vault", "vault_path", default=".envault", show_default=True)
+def get(key, vault_path):
+    """Get a secret from the vault."""
+    password = _prompt_password(confirm=False)
+    vault = load_vault(vault_path)
+    try:
+        value = get_secret(vault, key, password)
+        record_event("get", {"key": key, "vault": vault_path})
+        click.echo(value)
+    except KeyError:
         raise click.ClickException(f"Key '{key}' not found.")
-    click.echo(val)
+    except Exception as exc:
+        raise click.ClickException(str(exc))
 
 
 @cli.command()
 @click.argument("key")
-@click.pass_context
-def delete(ctx, key):
-    """Remove a secret by KEY."""
-    pwd = _prompt_password()
-    removed = delete_secret(key, ctx.obj["vault"], pwd)
-    if not removed:
-        raise click.ClickException(f"Key '{key}' not found.")
-    click.echo(f"✓ '{key}' deleted.")
+@click.option("--vault", "vault_path", default=".envault", show_default=True)
+def delete(key, vault_path):
+    """Delete a secret from the vault."""
+    password = _prompt_password(confirm=False)
+    vault = load_vault(vault_path)
+    vault = delete_secret(vault, key)
+    save_vault(vault, vault_path)
+    record_event("delete", {"key": key, "vault": vault_path})
+    click.echo(f"Secret '{key}' deleted.")
 
 
-@cli.command(name="list")
-@click.pass_context
-def list_cmd(ctx):
-    """List all stored secret keys."""
-    pwd = _prompt_password()
-    keys = list_keys(ctx.obj["vault"], pwd)
-    if not keys:
-        click.echo("(vault is empty)")
-    else:
-        click.echo("\n".join(keys))
+@cli.command(name="import")
+@click.argument("dotenv_path", default=".env")
+@click.option("--vault", "vault_path", default=".envault", show_default=True)
+def import_cmd(dotenv_path, vault_path):
+    """Import secrets from a .env file into the vault."""
+    password = _prompt_password(confirm=True)
+    vault = load_vault(vault_path)
+    count = import_dotenv_file(vault, dotenv_path, password, vault_path)
+    record_event("import", {"dotenv": dotenv_path, "vault": vault_path, "count": count})
+    click.echo(f"Imported {count} secrets from '{dotenv_path}'.")
 
 
-@cli.command()
-@click.argument("env_file", default=".env", type=click.Path())
-@click.pass_context
-def export(ctx, env_file):
-    """Write all secrets to an .env file."""
-    pwd = _prompt_password()
-    data = load_vault(ctx.obj["vault"], pwd)
-    lines = [f"{k}={v}" for k, v in sorted(data.items())]
-    Path(env_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    click.echo(f"✓ Exported {len(lines)} secret(s) to '{env_file}'.")
+@cli.command(name="export")
+@click.argument("dotenv_path", default=".env")
+@click.option("--vault", "vault_path", default=".envault", show_default=True)
+def export_cmd(dotenv_path, vault_path):
+    """Export secrets from the vault to a .env file."""
+    password = _prompt_password(confirm=False)
+    vault = load_vault(vault_path)
+    count = export_dotenv_file(vault, dotenv_path, password)
+    record_event("export", {"dotenv": dotenv_path, "vault": vault_path, "count": count})
+    click.echo(f"Exported {count} secrets to '{dotenv_path}'.")
 
 
-if __name__ == "__main__":
-    cli()
+cli.add_command(audit_group)
+cli.add_command(rotate_group)
+cli.add_command(diff_group)
