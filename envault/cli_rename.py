@@ -30,6 +30,12 @@ def rename_group() -> None:  # pragma: no cover
     help="Overwrite NEW_KEY if it already exists.",
 )
 def run_cmd(old_key: str, new_key: str, vault_path: str, overwrite: bool) -> None:
+    """Prompt for the vault password and rename OLD_KEY to NEW_KEY.
+
+    Exits with status code 1 and prints an error message to stderr if the
+    rename operation fails (e.g. key not found, destination already exists
+    without --overwrite, or wrong password).
+    """
     password = _prompt_password(confirm=False)
     result = rename_key(
         vault_path=vault_path,
