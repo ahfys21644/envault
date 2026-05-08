@@ -46,6 +46,12 @@ class TestRenameKey:
         from envault.vault import get_secret
         assert get_secret(vault_path, "FOO_NEW", PASSWORD) == "bar"
 
+    def test_unaffected_key_preserved(self, vault_path):
+        """Renaming one key should not alter other keys in the vault."""
+        rename_key(vault_path, "FOO", "FOO_NEW", PASSWORD)
+        from envault.vault import get_secret
+        assert get_secret(vault_path, "BAZ", PASSWORD) == "qux"
+
     def test_missing_key_returns_failure(self, vault_path):
         result = rename_key(vault_path, "MISSING", "ANYTHING", PASSWORD)
         assert result.success is False
