@@ -1,96 +1,109 @@
-"""Main CLI entry point for envault."""
+"""Main CLI entry-point for envault."""
 
-import click
+from __future__ import annotations
+
 from pathlib import Path
 
-from envault.vault import set_secret, get_secret, delete_secret, list_keys
-from envault.cli_audit import audit_group
-from envault.cli_rotate import rotate_group
-from envault.cli_diff import diff_group
-from envault.cli_search import search_group
-from envault.cli_tags import tags_group
-from envault.cli_snapshots import snapshot_group
-from envault.cli_rename import rename_group
-from envault.cli_history import history_group
-from envault.cli_template import template_group
-from envault.cli_ttl import ttl_group
+import click
 
-_DEFAULT_VAULT = Path(".envault")
+from envault.vault import set_secret, get_secret, delete_secret, list_secrets
+from envault.audit import record_event
 
 
-def _prompt_password(confirm: bool = False) -> str:
-    if confirm:
-        return click.prompt("Password", hide_input=True, confirmation_prompt=True)
-    return click.prompt("Password", hide_input=True)
+def _prompt_password(confirm: bool = True) -> str:
+    return click.prompt(
+        "Password",
+        hide_input=True,
+        confirmation_prompt=confirm,
+    )
 
 
 @click.group()
-def cli():
-    """envault — encrypted .env secret manager."""
-    pass
+def cli() -> None:
+    """envault — encrypted .env vault CLI."""
 
 
 @cli.command()
 @click.argument("key")
 @click.argument("value")
-@click.option("--vault", default=str(_DEFAULT_VAULT), show_default=True)
-def set(key: str, value: str, vault: str):
-    """Store a secret in the vault."""
+@click.option("--vault", default="vault.json", show_default=True, type=click.Path(path_type=Path))
+def set(key: str, value: str, vault: Path) -> None:
+    """Store a secret KEY=VALUE in the vault."""
     password = _prompt_password(confirm=False)
-    set_secret(Path(vault), key, value, password)
-    click.echo(f"Secret '{key}' stored.")
+    set_secret(vault, password, key, value)
+    record_event("set", {"key": key})
+    click.echo(f"Set {key}")
 
 
 @cli.command()
 @click.argument("key")
-@click.option("--vault", default=str(_DEFAULT_VAULT), show_default=True)
-def get(key: str, vault: str):
-    """Retrieve a secret from the vault."""
+@click.option("--vault", default="vault.json", show_default=True, type=click.Path(path_type=Path))
+def get(key: str, vault: Path) -> None:
+    """Retrieve a secret by KEY from the vault."""
     password = _prompt_password(confirm=False)
-    value = get_secret(Path(vault), key, password)
+    value = get_secret(vault, password, key)
     if value is None:
         click.echo(f"Key '{key}' not found.", err=True)
-    else:
-        click.echo(value)
+        raise SystemExit(1)
+    click.echo(value)
 
 
 @cli.command()
 @click.argument("key")
-@click.option("--vault", default=str(_DEFAULT_VAULT), show_default=True)
-def delete(key: str, vault: str):
-    """Delete a secret from the vault."""
+@click.option("--vault", default="vault.json", show_default=True, type=click.Path(path_type=Path))
+def delete(key: str, vault: Path) -> None:
+    """Delete a secret by KEY from the vault."""
     password = _prompt_password(confirm=False)
-    deleted = delete_secret(Path(vault), key, password)
-    if deleted:
-        click.echo(f"Secret '{key}' deleted.")
-    else:
+    removed = delete_secret(vault, password, key)
+    if not removed:
         click.echo(f"Key '{key}' not found.", err=True)
+        raise SystemExit(1)
+    record_event("delete", {"key": key})
+    click.echo(f"Deleted {key}")
 
 
 @cli.command(name="list")
-@click.option("--vault", default=str(_DEFAULT_VAULT), show_default=True)
-def list_cmd(vault: str):
-    """List all keys in the vault."""
+@click.option("--vault", default="vault.json", show_default=True, type=click.Path(path_type=Path))
+def list_cmd(vault: Path) -> None:
+    """List all keys stored in the vault."""
     password = _prompt_password(confirm=False)
-    keys = list_keys(Path(vault), password)
+    keys = list_secrets(vault, password)
     if not keys:
-        click.echo("Vault is empty.")
+        click.echo("No secrets stored.")
     else:
-        for k in keys:
+        for k in sorted(keys):
             click.echo(k)
 
 
-cli.add_command(audit_group, name="audit")
-cli.add_command(rotate_group, name="rotate")
-cli.add_command(diff_group, name="diff")
-cli.add_command(search_group, name="search")
-cli.add_command(tags_group, name="tags")
-cli.add_command(snapshot_group, name="snapshot")
-cli.add_command(rename_group, name="rename")
-cli.add_command(history_group, name="history")
-cli.add_command(template_group, name="template")
-cli.add_command(ttl_group, name="ttl")
+# ---------------------------------------------------------------------------
+# Register sub-command groups from feature modules
+# ---------------------------------------------------------------------------
+from envault.cli_audit import audit_group          # noqa: E402
+from envault.cli_rotate import rotate_group        # noqa: E402
+from envault.cli_diff import diff_group            # noqa: E402
+from envault.cli_search import search_group        # noqa: E402
+from envault.cli_tags import tags_group            # noqa: E402
+from envault.cli_snapshots import snapshot_group   # noqa: E402
+from envault.cli_rename import rename_group        # noqa: E402
+from envault.cli_history import history_group      # noqa: E402
+from envault.cli_template import template_group    # noqa: E402
+from envault.cli_ttl import ttl_group              # noqa: E402
+from envault.cli_lock import lock_group            # noqa: E402
+from envault.cli_pin import pin_group              # noqa: E402
+from envault.cli_profile import profile_group      # noqa: E402
+from envault.cli_watch import watch_group          # noqa: E402
 
-
-if __name__ == "__main__":
-    cli()
+cli.add_command(audit_group)
+cli.add_command(rotate_group)
+cli.add_command(diff_group)
+cli.add_command(search_group)
+cli.add_command(tags_group)
+cli.add_command(snapshot_group)
+cli.add_command(rename_group)
+cli.add_command(history_group)
+cli.add_command(template_group)
+cli.add_command(ttl_group)
+cli.add_command(lock_group)
+cli.add_command(pin_group)
+cli.add_command(profile_group)
+cli.add_command(watch_group)
