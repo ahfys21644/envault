@@ -38,3 +38,16 @@ class TestEncryptDecrypt:
         plaintext = "KEY=こんにちは"
         encoded = encrypt(plaintext, "pw")
         assert decrypt(encoded, "pw") == plaintext
+
+    def test_tampered_ciphertext_raises(self):
+        """Flipping a byte in the ciphertext should cause decryption to fail."""
+        import base64
+
+        encoded = encrypt("sensitive data", "pw")
+        raw = bytearray(base64.b64decode(encoded.encode()))
+        # Flip a byte near the end (in the ciphertext/tag region)
+        raw[-1] ^= 0xFF
+        tampered = base64.b64encode(bytes(raw)).decode()
+
+        with pytest.raises(InvalidTag):
+            decrypt(tampered, "pw")
